@@ -1,48 +1,184 @@
-﻿<!DOCTYPE html>
-
-<!--
-     HTML code used with Epic Games HTML5 projects
-
-     much of this is for UE4 development purposes.
-
-     to create a custom HTML file for your project:
-     - make a copy of this file - or make one from scratch
-     - and put it in: "your project folder"/Build/HTML/GameX.html.template
--->
-
+<!DOCTYPE html>
 <html lang="en">
 <head>
-	<title>PartyPixels_Test3</title>
-	<meta charset="utf-8">
-	<meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Night of the Oni</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
 
-	<script src="https://code.jquery.com/jquery-2.1.3.min.js"></script>
-	<script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/js/bootstrap.min.js"></script>
-	<link href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/css/bootstrap.min.css" rel="stylesheet">
+  <!-- Możesz wywalić jQuery/Bootstrap jeśli chcesz, ale zostawiam, bo masz w template -->
+  <script src="https://code.jquery.com/jquery-2.1.3.min.js"></script>
+  <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/js/bootstrap.min.js"></script>
+  <link href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/css/bootstrap.min.css" rel="stylesheet">
 
-	<link href="PartyPixels_Test3.css" rel="stylesheet">
+  <style>
+    /* --- Hide UE/Emscripten debug UI --- */
+    #controls, #output, #log, #status, #progress, #spinner,
+    .emscripten_border, .emscripten, #fullscreen_request, #clear_indexeddb,
+    #buttonrow, #logwindow, #compilingmessage {
+      display: none !important;
+    }
+
+    /* keep canvas full */
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+    #canvas { width: 100vw; height: 100vh; display:block; }
+
+    /* --- Custom PP Loading Overlay --- */
+    #ppLoading{
+      position:fixed; inset:0;
+      display:flex; align-items:center; justify-content:center;
+      background: radial-gradient(circle at 50% 30%, rgba(255,60,60,.18), rgba(0,0,0,.92) 60%);
+      color:#fff; z-index:9999;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+    }
+    .ppBox{
+      width:min(560px, 92vw);
+      padding:20px;
+      border-radius:18px;
+      background:rgba(255,255,255,.06);
+      border:1px solid rgba(255,255,255,.12);
+      box-shadow: 0 20px 60px rgba(0,0,0,.55);
+    }
+    .ppTitle{font-size:28px; letter-spacing:1px; margin-bottom:6px}
+    .ppSub{opacity:.8; margin-bottom:14px}
+    .ppBar{height:10px; border-radius:999px; background:rgba(255,255,255,.14); overflow:hidden}
+    #ppBarFill{height:100%; width:0%; background:rgba(255,255,255,.85); transition: width .12s linear;}
+    .ppTip{opacity:.65; margin-top:12px; font-size:13px}
+    #ppFullscreen{
+      position:fixed; right:14px; top:14px;
+      padding:10px 14px; border-radius:999px;
+      background:rgba(255,255,255,.10);
+      border:1px solid rgba(255,255,255,.18);
+      color:#fff;
+    }
+  </style>
 </head>
+
 <body>
+  <div class="wrapper" id="mainarea">
+    <!-- Custom Loading -->
+    <div id="ppLoading">
+      <div class="ppBox">
+        <div class="ppTitle">NIGHT OF THE ONI</div>
+        <div class="ppSub">Downloading the curse…</div>
+        <div class="ppBar"><div id="ppBarFill"></div></div>
+        <div class="ppTip">First load downloads ~85MB</div>
+      </div>
+      <button id="ppFullscreen" type="button">Fullscreen</button>
+    </div>
 
-<div class="wrapper" id="mainarea">
-	<div class="alert alert-warning centered-axis-xy" style="min-height: 20px; display:none;" role="alert" id="compilingmessage">
-		<div id='loadTasks'> </div>
-	</div>
-	<!-- The "tabindex=0" specifier on the canvas is important to allow it to capture keyboard focus when clicking on it with a mouse -->
-	<canvas tabindex=0 id="canvas" class="emscripten" oncontextmenu="event.preventDefault()" style="display:none;">
-</div>
-<div class="row buttonarea text-center" id="buttonrow">
-	<div class="col-sm-2 text-center"></div>
-	<div class="col-sm-2 text-center"><button type="button" class="btn btn-primary" onclick="try { Module['pauseMainLoop'](); } catch(e) {console.error(e);}">Pause</button></div>
-	<div class="col-sm-2 text-center"><button type="button" class="btn btn-primary" onclick="try { Module['resumeMainLoop'](); } catch(e) {console.error(e);}">Resume</button></div>
-	<div class="col-sm-2 text-center"><button type="button" class="btn btn-primary" onclick="var w = document.getElementById('logwindow'); w.style.display = w.style.display ? '' : 'none';">Toggle Log</button></div>
-	<div class="col-sm-2 text-center"><button type="button" class="btn btn-primary" id='clear_indexeddb' onclick="try { deleteIndexedDBStorage(); } catch(e) {console.error(e);}">Clear IndexedDB</button></div>
-	<div class="col-sm-2 text-center"><button type="button" class="btn btn-primary" id="fullscreen_request">FullScreen</button></div>
-	<div class="col-sm-2 text-center"></div>
-	<div class="col-sm-2 text-center"></div>
-</div>
-<div class="texthalf text-normal jumbotron " id="logwindow" style='display:none'></div>
+    <!-- Canvas (UE4 will show it when ready; my JS też dopilnuje) -->
+    <canvas tabindex="0" id="canvas" oncontextmenu="event.preventDefault()" style="display:none;"></canvas>
 
-<script src="PartyPixels_Test3.UE4.js"></script>
+    <!-- Zostawiamy elementy template (ukryte CSSem), bo UE4 czasem do nich się odwołuje -->
+    <div class="row buttonarea text-center" id="buttonrow">
+      <div class="col-sm-2 text-center"></div>
+      <div class="col-sm-2 text-center"><button type="button" class="btn btn-primary" onclick="try { Module['pauseMainLoop'](); } catch(e) {console.error(e);}">Pause</button></div>
+      <div class="col-sm-2 text-center"><button type="button" class="btn btn-primary" onclick="try { Module['resumeMainLoop'](); } catch(e) {console.error(e);}">Resume</button></div>
+      <div class="col-sm-2 text-center"><button type="button" class="btn btn-primary" onclick="var w = document.getElementById('logwindow'); w.style.display = w.style.display ? ''_attach : ''; w.style.display = w.style.display ? '' : 'none';">Toggle Log</button></div>
+      <div class="col-sm-2 text-center"><button type="button" class="btn btn-primary" id="clear_indexeddb" onclick="try { deleteIndexedDBStorage(); } catch(e) {console.error(e);}">Clear IndexedDB</button></div>
+      <div class="col-sm-2 text-center"><button type="button" class="btn btn-primary" id="fullscreen_request">FullScreen</button></div>
+      <div class="col-sm-2 text-center"></div>
+    </div>
+
+    <div class="texthalf text-normal jumbotron" id="logwindow" style="display:none"></div>
+  </div>
+
+  <script>
+    // ---------------------------------------------------------
+    // Party Pixels custom loader + progress hook for UE4 HTML5
+    // ---------------------------------------------------------
+    (function () {
+      const overlay = document.getElementById('ppLoading');
+      const bar = document.getElementById('ppBarFill');
+      const canvas = document.getElementById('canvas');
+      const btnFS = document.getElementById('ppFullscreen');
+
+      function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
+
+      function setPct(p) {
+        if (!bar) return;
+        p = clamp(p, 0, 100);
+        bar.style.width = p + '%';
+      }
+
+      function hideOverlay() {
+        if (overlay) overlay.style.display = 'none';
+      }
+
+      function showCanvas() {
+        if (canvas && canvas.style.display === 'none') canvas.style.display = 'block';
+      }
+
+      function requestFullscreen() {
+        try {
+          // Fullscreen na canvas najlepiej
+          if (canvas?.requestFullscreen) canvas.requestFullscreen();
+          else if (canvas?.webkitRequestFullscreen) canvas.webkitRequestFullscreen();
+        } catch (e) {}
+      }
+
+      btnFS?.addEventListener('click', requestFullscreen);
+
+      // Upewniamy się, że Module istnieje zanim UE4.js wystartuje
+      window.Module = window.Module || {};
+
+      // Przechowaj oryginalny setStatus, jeśli template go ustawia wcześniej
+      const oldSetStatus = window.Module.setStatus;
+
+      // Hook na status UE/Emscripten (download/compile)
+      window.Module.setStatus = function (text) {
+        try {
+          // Najczęściej: "Downloading... (12/100)" lub "Preparing... 42%"
+          let p = null;
+
+          const frac = /\((\d+)\s*\/\s*(\d+)\)/.exec(text);
+          if (frac) {
+            const a = parseInt(frac[1], 10);
+            const b = parseInt(frac[2], 10);
+            if (b > 0) p = Math.round((a / b) * 100);
+          } else {
+            const pct = /(\d+)\s*%/.exec(text);
+            if (pct) p = parseInt(pct[1], 10);
+          }
+
+          if (p !== null && !Number.isNaN(p)) setPct(p);
+
+          // Gdy wchodzi "Running..." / "All downloads complete" — zwykle jesteśmy gotowi
+          if (/running|ready|complete|all downloads/i.test(String(text))) {
+            setPct(100);
+            showCanvas();
+            // mały delay, żeby bar zdążył dojść do 100
+            setTimeout(hideOverlay, 300);
+          }
+        } catch (e) {
+          // ignoruj
+        }
+
+        if (typeof oldSetStatus === 'function') oldSetStatus(text);
+      };
+
+      // Dodatkowy fallback: jak canvas zacznie renderować, ukryj overlay po chwili.
+      // (nie zawsze setStatus łapie idealnie na każdym buildzie)
+      let rafCount = 0;
+      function rafProbe(){
+        rafCount++;
+        // po ~1.5s od startu renderu uznajemy, że działa
+        if (rafCount === 90) {
+          showCanvas();
+          setPct(100);
+          setTimeout(hideOverlay, 300);
+          return;
+        }
+        requestAnimationFrame(rafProbe);
+      }
+      requestAnimationFrame(rafProbe);
+
+      // Startowe 1%
+      setPct(1);
+    })();
+  </script>
+
+  <!-- UE4 loader -->
+  <script src="PartyPixels_Test3.UE4.js"></script>
 </body>
 </html>
