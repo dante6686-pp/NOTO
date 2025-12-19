@@ -101,88 +101,104 @@
     <div class="texthalf text-normal jumbotron" id="logwindow" style="display:none"></div>
   </div>
 
-  <script>
+<script>
 (function () {
   const overlay = document.getElementById('ppLoading');
   const bar = document.getElementById('ppBarFill');
   const canvas = document.getElementById('canvas');
   const btnFS = document.getElementById('ppFullscreen');
 
+  let gotAnyProgress = false;
+  let hideRequested = false;
+
   function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
   function setPct(p) {
     if (!bar) return;
+    gotAnyProgress = true;
+    bar.classList.remove('ppIndeterminate');
+    bar.style.transform = 'none';
     bar.style.width = clamp(p, 0, 100) + '%';
+  }
+  function startIndeterminate(){
+    if (!bar) return;
+    if (!gotAnyProgress) bar.classList.add('ppIndeterminate');
   }
   function showCanvas() {
     if (canvas && canvas.style.display === 'none') canvas.style.display = 'block';
   }
   function hideOverlay() {
-    if (overlay) overlay.style.display = 'none';
+    if (!overlay) return;
+    overlay.classList.add('ppHidden'); // znika i NIE blokuje klików
   }
+
   function requestFullscreen() {
     try {
       if (canvas?.requestFullscreen) canvas.requestFullscreen();
       else if (canvas?.webkitRequestFullscreen) canvas.webkitRequestFullscreen();
     } catch (e) {}
   }
-
   btnFS?.addEventListener('click', requestFullscreen);
 
-  // Upewnij się, że Module istnieje zanim UE4.js wystartuje
+  // Start: pokaż indeterminate po chwili, jeśli nie mamy %.
+  setTimeout(startIndeterminate, 500);
+
+  // Przygotuj Module zanim załaduje się PartyPixels_Test3.UE4.js
   window.Module = window.Module || {};
 
-  // 1) Progress z Emscripten: monitorRunDependencies jest najpewniejsze
-  //    (działa podczas dociągania plików)
-  const oldMRD = window.Module.monitorRunDependencies;
-  window.Module.monitorRunDependencies = function(left) {
-    try {
-      // Jeśli total jeszcze nie znane, ustawiamy je przy pierwszym wywołaniu
-      if (typeof window.__ppTotalDeps !== 'number') window.__ppTotalDeps = left;
-      const total = window.__ppTotalDeps || left || 1;
-
-      // left spada do 0 → procent rośnie do 100
-      const done = total - left;
-      const pct = Math.round((done / total) * 100);
-      if (!Number.isNaN(pct)) setPct(pct);
-    } catch(e) {}
-
-    if (typeof oldMRD === 'function') oldMRD(left);
-  };
-
-  // 2) Dodatkowo parsuj setStatus (czasem UE4 template tam wrzuca procenty/frac)
+  // 1) Hook statusu — jeśli UE4 coś podaje typu "xx%" lub "(a/b)", złapiemy.
   const oldSetStatus = window.Module.setStatus;
   window.Module.setStatus = function (text) {
     try {
-      let p = null;
+      const s = String(text);
 
-      const frac = /\((\d+)\s*\/\s*(\d+)\)/.exec(String(text));
+      // (a/b)
+      const frac = /\((\d+)\s*\/\s*(\d+)\)/.exec(s);
       if (frac) {
         const a = parseInt(frac[1], 10);
         const b = parseInt(frac[2], 10);
-        if (b > 0) p = Math.round((a / b) * 100);
-      } else {
-        const pct = /(\d+)\s*%/.exec(String(text));
-        if (pct) p = parseInt(pct[1], 10);
+        if (b > 0) setPct(Math.round((a / b) * 100));
       }
 
-      if (p !== null && !Number.isNaN(p)) setPct(p);
+      // xx%
+      const pct = /(\d+)\s*%/.exec(s);
+      if (pct) setPct(parseInt(pct[1], 10));
     } catch(e) {}
 
     if (typeof oldSetStatus === 'function') oldSetStatus(text);
   };
 
-  // 3) Najważniejsze: overlay chowamy dopiero gdy runtime faktycznie ruszy
-  window.Module.postRun = window.Module.postRun || [];
-  window.Module.postRun.push(function () {
-    setPct(100);
+  // 2) Najpewniejsze: runtime gotowy → chowamy overlay
+  // UWAGA: UE4.js czasem nadpisuje onRuntimeInitialized,
+  // więc robimy wrapper, który zawsze odpali nasze.
+  const ourReady = function(){
+    if (hideRequested) return;
+    hideRequested = true;
+
+    // daj grze chwilę złapać focus
     showCanvas();
+    setPct(100);
 
-    // mały delay żeby nie “mignęło” na czarne
-    setTimeout(hideOverlay, 250);
-  });
+    // chowamy overlay po krótkim delayu
+    setTimeout(hideOverlay, 150);
+  };
 
-  // Start
-  setPct(1);
+  const prevInit = window.Module.onRuntimeInitialized;
+  window.Module.onRuntimeInitialized = function(){
+    try { if (typeof prevInit === 'function') prevInit(); } catch(e) {}
+    ourReady();
+  };
+
+  // 3) Fallback: jeśli runtime już działa, a overlay dalej siedzi,
+  // to po 8s zdejmij overlay żeby nie blokował.
+  setTimeout(() => {
+    if (overlay && !overlay.classList.contains('ppHidden')) {
+      // jeśli gra już pokazuje canvas (albo widać coś pod spodem), zdejmij
+      // ten fallback ratuje przypadki gdy UE4 nadpisze init
+      showCanvas();
+      hideOverlay();
+    }
+  }, 8000);
+
 })();
 </script>
 
