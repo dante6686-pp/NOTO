@@ -84,99 +84,90 @@
   </div>
 
   <script>
-    // ---------------------------------------------------------
-    // Party Pixels custom loader + progress hook for UE4 HTML5
-    // ---------------------------------------------------------
-    (function () {
-      const overlay = document.getElementById('ppLoading');
-      const bar = document.getElementById('ppBarFill');
-      const canvas = document.getElementById('canvas');
-      const btnFS = document.getElementById('ppFullscreen');
+(function () {
+  const overlay = document.getElementById('ppLoading');
+  const bar = document.getElementById('ppBarFill');
+  const canvas = document.getElementById('canvas');
+  const btnFS = document.getElementById('ppFullscreen');
 
-      function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
+  function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
+  function setPct(p) {
+    if (!bar) return;
+    bar.style.width = clamp(p, 0, 100) + '%';
+  }
+  function showCanvas() {
+    if (canvas && canvas.style.display === 'none') canvas.style.display = 'block';
+  }
+  function hideOverlay() {
+    if (overlay) overlay.style.display = 'none';
+  }
+  function requestFullscreen() {
+    try {
+      if (canvas?.requestFullscreen) canvas.requestFullscreen();
+      else if (canvas?.webkitRequestFullscreen) canvas.webkitRequestFullscreen();
+    } catch (e) {}
+  }
 
-      function setPct(p) {
-        if (!bar) return;
-        p = clamp(p, 0, 100);
-        bar.style.width = p + '%';
+  btnFS?.addEventListener('click', requestFullscreen);
+
+  // Upewnij się, że Module istnieje zanim UE4.js wystartuje
+  window.Module = window.Module || {};
+
+  // 1) Progress z Emscripten: monitorRunDependencies jest najpewniejsze
+  //    (działa podczas dociągania plików)
+  const oldMRD = window.Module.monitorRunDependencies;
+  window.Module.monitorRunDependencies = function(left) {
+    try {
+      // Jeśli total jeszcze nie znane, ustawiamy je przy pierwszym wywołaniu
+      if (typeof window.__ppTotalDeps !== 'number') window.__ppTotalDeps = left;
+      const total = window.__ppTotalDeps || left || 1;
+
+      // left spada do 0 → procent rośnie do 100
+      const done = total - left;
+      const pct = Math.round((done / total) * 100);
+      if (!Number.isNaN(pct)) setPct(pct);
+    } catch(e) {}
+
+    if (typeof oldMRD === 'function') oldMRD(left);
+  };
+
+  // 2) Dodatkowo parsuj setStatus (czasem UE4 template tam wrzuca procenty/frac)
+  const oldSetStatus = window.Module.setStatus;
+  window.Module.setStatus = function (text) {
+    try {
+      let p = null;
+
+      const frac = /\((\d+)\s*\/\s*(\d+)\)/.exec(String(text));
+      if (frac) {
+        const a = parseInt(frac[1], 10);
+        const b = parseInt(frac[2], 10);
+        if (b > 0) p = Math.round((a / b) * 100);
+      } else {
+        const pct = /(\d+)\s*%/.exec(String(text));
+        if (pct) p = parseInt(pct[1], 10);
       }
 
-      function hideOverlay() {
-        if (overlay) overlay.style.display = 'none';
-      }
+      if (p !== null && !Number.isNaN(p)) setPct(p);
+    } catch(e) {}
 
-      function showCanvas() {
-        if (canvas && canvas.style.display === 'none') canvas.style.display = 'block';
-      }
+    if (typeof oldSetStatus === 'function') oldSetStatus(text);
+  };
 
-      function requestFullscreen() {
-        try {
-          // Fullscreen na canvas najlepiej
-          if (canvas?.requestFullscreen) canvas.requestFullscreen();
-          else if (canvas?.webkitRequestFullscreen) canvas.webkitRequestFullscreen();
-        } catch (e) {}
-      }
+  // 3) Najważniejsze: overlay chowamy dopiero gdy runtime faktycznie ruszy
+  window.Module.postRun = window.Module.postRun || [];
+  window.Module.postRun.push(function () {
+    setPct(100);
+    showCanvas();
 
-      btnFS?.addEventListener('click', requestFullscreen);
+    // mały delay żeby nie “mignęło” na czarne
+    setTimeout(hideOverlay, 250);
+  });
 
-      // Upewniamy się, że Module istnieje zanim UE4.js wystartuje
-      window.Module = window.Module || {};
+  // Start
+  setPct(1);
+})();
+</script>
 
-      // Przechowaj oryginalny setStatus, jeśli template go ustawia wcześniej
-      const oldSetStatus = window.Module.setStatus;
-
-      // Hook na status UE/Emscripten (download/compile)
-      window.Module.setStatus = function (text) {
-        try {
-          // Najczęściej: "Downloading... (12/100)" lub "Preparing... 42%"
-          let p = null;
-
-          const frac = /\((\d+)\s*\/\s*(\d+)\)/.exec(text);
-          if (frac) {
-            const a = parseInt(frac[1], 10);
-            const b = parseInt(frac[2], 10);
-            if (b > 0) p = Math.round((a / b) * 100);
-          } else {
-            const pct = /(\d+)\s*%/.exec(text);
-            if (pct) p = parseInt(pct[1], 10);
-          }
-
-          if (p !== null && !Number.isNaN(p)) setPct(p);
-
-          // Gdy wchodzi "Running..." / "All downloads complete" — zwykle jesteśmy gotowi
-          if (/running|ready|complete|all downloads/i.test(String(text))) {
-            setPct(100);
-            showCanvas();
-            // mały delay, żeby bar zdążył dojść do 100
-            setTimeout(hideOverlay, 300);
-          }
-        } catch (e) {
-          // ignoruj
-        }
-
-        if (typeof oldSetStatus === 'function') oldSetStatus(text);
-      };
-
-      // Dodatkowy fallback: jak canvas zacznie renderować, ukryj overlay po chwili.
-      // (nie zawsze setStatus łapie idealnie na każdym buildzie)
-      let rafCount = 0;
-      function rafProbe(){
-        rafCount++;
-        // po ~1.5s od startu renderu uznajemy, że działa
-        if (rafCount === 90) {
-          showCanvas();
-          setPct(100);
-          setTimeout(hideOverlay, 300);
-          return;
-        }
-        requestAnimationFrame(rafProbe);
-      }
-      requestAnimationFrame(rafProbe);
-
-      // Startowe 1%
-      setPct(1);
-    })();
-  </script>
 
   <!-- UE4 loader -->
   <script src="PartyPixels_Test3.UE4.js"></script>
